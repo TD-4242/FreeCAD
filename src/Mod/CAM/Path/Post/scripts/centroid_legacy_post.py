@@ -283,6 +283,12 @@ def parse(pathobj):
                 if command == lastcommand:
                     commandlist.pop(0)
 
+            # On G84/G74 tapping cycles F carries the thread pitch, not a feed
+            # rate.  Tapping feed is locked to the spindle: pitch * RPM.
+            tap_feed = None
+            if command in ("G84", "G74") and "F" in c.Parameters and "S" in c.Parameters:
+                tap_feed = float(c.Parameters["F"]) * float(c.Parameters["S"]) / 60.0
+
             # Now add the remaining parameters in order
             for param in params:
                 if param in c.Parameters:
@@ -291,7 +297,8 @@ def parse(pathobj):
                             "G0",
                             "G00",
                         ]:  # centroid doesn't use rapid speeds
-                            speed = Units.Quantity(c.Parameters["F"], FreeCAD.Units.Velocity)
+                            feed = c.Parameters["F"] if tap_feed is None else tap_feed
+                            speed = Units.Quantity(feed, FreeCAD.Units.Velocity)
                             commandlist.append(
                                 param
                                 + format(
