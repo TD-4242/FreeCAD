@@ -323,3 +323,77 @@ M99
         result = gcode.splitlines()[5]
         expected = ";comment"
         self.assertEqual(result, expected)
+
+    def test100(self):
+        """
+        Test tapping feed rate.
+
+        On G84/G74 tapping cycles the F parameter carries the thread pitch,
+        not a feed rate.  The tapping feed is locked to the spindle and must
+        be derived as pitch * RPM.
+        """
+        # 1.27 mm/rev pitch (a 1/4-20 tap) at 500 RPM is 635 mm/min.
+        c = Path.Command("G84", {"X": 0.0, "Y": 0.0, "Z": -12.7, "R": 2.54, "F": 1.27, "S": 500})
+
+        self.docobj.Path = Path.Path([c])
+        postables = [self.docobj]
+
+        args = "--no-header --no-show-editor"
+        gcode = postprocessor.export(postables, "-", args)
+        result = gcode.splitlines()[5]
+        expected = "G84 X0.0000 Y0.0000 Z-12.7000 F635.0 S500 R2.5400"
+        self.assertEqual(result, expected)
+
+    def test110(self):
+        """
+        Test tapping feed rate in inches.
+
+        A 1/4-20 tap is 0.05 in/rev; at 500 RPM that is 25 in/min.
+        """
+        c = Path.Command("G84", {"X": 0.0, "Y": 0.0, "Z": -12.7, "R": 2.54, "F": 1.27, "S": 500})
+
+        self.docobj.Path = Path.Path([c])
+        postables = [self.docobj]
+
+        args = "--no-header --inches --no-show-editor"
+        gcode = postprocessor.export(postables, "-", args)
+        result = gcode.splitlines()[5]
+        expected = "G84 X0.0000 Y0.0000 Z-0.5000 F25.0 S500 R0.1000"
+        self.assertEqual(result, expected)
+
+    def test120(self):
+        """
+        Test tapping feed rate on a left-hand tap.
+
+        G74 carries the pitch in F just as G84 does.
+        """
+        c = Path.Command("G74", {"X": 0.0, "Y": 0.0, "Z": -12.7, "R": 2.54, "F": 1.27, "S": 500})
+
+        self.docobj.Path = Path.Path([c])
+        postables = [self.docobj]
+
+        args = "--no-header --no-show-editor"
+        gcode = postprocessor.export(postables, "-", args)
+        result = gcode.splitlines()[5]
+        expected = "G74 X0.0000 Y0.0000 Z-12.7000 F635.0 S500 R2.5400"
+        self.assertEqual(result, expected)
+
+    def test130(self):
+        """
+        Test that a normal feed move is not rescaled.
+
+        Only the tapping cycles treat F as a pitch; an ordinary G1 feed must
+        pass through untouched even when a spindle speed is in effect.
+        """
+        c = Path.Command("M3", {"S": 500})
+        # 100 mm/min == 1.6667 mm/s in internal units
+        c2 = Path.Command("G1", {"X": 25.4, "Y": 0.0, "Z": 0.0, "F": 100.0 / 60.0})
+
+        self.docobj.Path = Path.Path([c, c2])
+        postables = [self.docobj]
+
+        args = "--no-header --no-show-editor"
+        gcode = postprocessor.export(postables, "-", args)
+        result = gcode.splitlines()[6]
+        expected = "G1 X25.4000 Y0.0000 Z0.0000 F100.0"
+        self.assertEqual(result, expected)
