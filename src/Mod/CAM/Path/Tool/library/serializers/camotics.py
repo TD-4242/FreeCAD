@@ -53,6 +53,40 @@ tooltemplate = {
     "description": "",
 }
 
+# Every length label the imperial schemas can produce.  getUserPreferred()
+# picks by magnitude, so US customary reports thou or mi as readily as in.
+IMPERIAL_UNITS = ("in", '"', "thou", "ft", "'", "yd", "mi")
+
+# Camotics understands only these two, and its "units" key names which one the
+# bare numbers are in.  Both directions read the pairing from here so they
+# cannot disagree.
+CAMOTICS_UNITS = {"imperial": "in", "metric": "mm"}
+
+MM_PER_INCH = 25.4
+
+
+def _camotics_units(quantity) -> tuple:
+    """Return the ("units" label, FreeCAD unit) Camotics should use for a length."""
+    try:
+        imperial = quantity.getUserPreferred()[2] in IMPERIAL_UNITS
+    except (AttributeError, IndexError, TypeError):
+        imperial = False
+    label = "imperial" if imperial else "metric"
+    return label, CAMOTICS_UNITS[label]
+
+
+def _length_in_unit(value, unit: str, decimals: int, default_mm: float) -> float:
+    """Convert a length to `unit` and return it as a plain rounded float.
+
+    Quantity.Value, a bare number and the fallback are all millimetres, since
+    that is FreeCAD's internal length unit.  Normalising to mm first means every
+    path converts, so no value can be emitted under a label it does not match.
+    """
+    mm = value.Value if isinstance(value, FreeCAD.Units.Quantity) else value
+    if not isinstance(mm, (int, float)):
+        mm = default_mm
+    return round(float(mm) / (MM_PER_INCH if unit == "in" else 1.0), decimals)
+
 
 class CamoticsLibrarySerializer(AssetSerializer):
     for_class: Type[Asset] = Library
@@ -72,48 +106,24 @@ class CamoticsLibrarySerializer(AssetSerializer):
         if not isinstance(asset, Library):
             raise TypeError("Asset must be a Library instance")
 
+        decimals = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Units").GetInt(
+            "Decimals", 2
+        )
+
         toollist = {}
         for tool_no, tool in asset._bit_nos.items():
             assert isinstance(tool, RotaryToolBitMixin)
             toolitem = tooltemplate.copy()
 
             diameter_value = tool.get_diameter()
-            # Ensure diameter is a float, handle Quantity and other types
-            diameter_serializable = 2.0  # Default value as float
-            if isinstance(diameter_value, FreeCAD.Units.Quantity):
-                try:
-                    val_mm = diameter_value.getValueAs("mm")
-                    if val_mm is not None:
-                        diameter_serializable = float(val_mm)
-                except ValueError:
-                    # Fallback to raw value if unit conversion fails
-                    raw_val = diameter_value.Value if hasattr(diameter_value, "Value") else None
-                    if isinstance(raw_val, (int, float)):
-                        diameter_serializable = float(raw_val)
-            elif isinstance(diameter_value, (int, float)):
-                diameter_serializable = float(diameter_value) if diameter_value is not None else 2.0
 
-            toolitem["diameter"] = diameter_serializable
+            toolitem["units"], unit = _camotics_units(diameter_value)
+
+            toolitem["diameter"] = _length_in_unit(diameter_value, unit, decimals, 2.0)
 
             toolitem["description"] = tool.label
 
-            length_value = tool.get_length()
-            # Ensure length is a float, handle Quantity and other types
-            length_serializable = 10.0  # Default value as float
-            if isinstance(length_value, FreeCAD.Units.Quantity):
-                try:
-                    val_mm = length_value.getValueAs("mm")
-                    if val_mm is not None:
-                        length_serializable = float(val_mm)
-                except ValueError:
-                    # Fallback to raw value if unit conversion fails
-                    raw_val = length_value.Value if hasattr(length_value, "Value") else None
-                    if isinstance(raw_val, (int, float)):
-                        length_serializable = float(raw_val)
-            elif isinstance(length_value, (int, float)):
-                length_serializable = float(length_value) if length_value is not None else 10.0
-
-            toolitem["length"] = length_serializable
+            toolitem["length"] = _length_in_unit(tool.get_length(), unit, decimals, 10.0)
 
             toolitem["shape"] = SHAPEMAP.get(tool._tool_bit_shape.name.lower(), "Cylindrical")
             toollist[str(tool_no)] = toolitem
@@ -149,15 +159,18 @@ class CamoticsLibrarySerializer(AssetSerializer):
 
             # Translate parameters to FreeCAD types
             params = {}
+            # The bare numbers are in the unit named by the "units" key.
+            unit = CAMOTICS_UNITS.get(toolitem.get("units"), "mm")
+
             try:
                 diameter = float(toolitem.get("diameter", 2))
-                params["Diameter"] = FreeCAD.Units.Quantity(f"{diameter} mm")
+                params["Diameter"] = FreeCAD.Units.Quantity(f"{diameter} {unit}")
             except (ValueError, TypeError):
                 print(f"Warning: Invalid diameter for tool {tool_no_str}, skipping.")
 
             try:
                 length = float(toolitem.get("length", 10))
-                params["Length"] = FreeCAD.Units.Quantity(f"{length} mm")
+                params["Length"] = FreeCAD.Units.Quantity(f"{length} {unit}")
             except (ValueError, TypeError):
                 print(f"Warning: Invalid length for tool {tool_no_str}, skipping.")
 
