@@ -30,6 +30,7 @@ from typing import Any, Dict
 from Path.Post.Processor import PostProcessor
 
 import Path
+import Path.Post.UtilsParse as PostUtilsParse
 import FreeCAD
 
 translate = FreeCAD.Qt.translate
@@ -48,6 +49,26 @@ Values = Dict[str, Any]
 Visible = Dict[str, bool]
 
 POST_TYPE = "machine"
+
+
+def tapping_F_parameter(
+    values: Values,
+    command: str,
+    param: str,
+    param_value: Any,
+    parameters: Any,
+    current_location: Any,
+) -> str:
+    """Process the F parameter.
+
+    On G84/G74 tapping cycles F carries the thread pitch, not a feed rate.
+    Tapping feed is locked to the spindle: pitch * RPM.
+    """
+    if command in ("G84", "G74") and "S" in parameters:
+        param_value = float(param_value) * float(parameters["S"]) / 60.0
+    return PostUtilsParse.default_F_parameter(
+        values, command, param, param_value, parameters, current_location
+    )
 
 
 class Centroid(PostProcessor):
@@ -111,6 +132,10 @@ class Centroid(PostProcessor):
         #
         # The machine editor can now configure this postprocessor using the new property system.
         # Future updates should migrate hardcoded values below to use postprocessor_properties.
+        #
+        # G84/G74 tapping cycles carry the thread pitch in F, not a feed rate.
+        #
+        values["PARAMETER_FUNCTIONS"]["F"] = tapping_F_parameter
         #
         # Use 4 digits for axis precision by default.
         #
@@ -221,6 +246,19 @@ G49 H0"""
         arguments_visible["axis-modal"] = False
         arguments_visible["precision"] = False
         arguments_visible["tlo"] = False
+
+    def _convert_drill_cycle(self, command: Path.Command) -> str:
+        """Convert a drill cycle command to gcode.
+
+        On G84/G74 tapping cycles F carries the thread pitch, not a feed rate.
+        Tapping feed is locked to the spindle: pitch * RPM.
+        """
+        params = command.Parameters
+        if command.Name in ("G84", "G74") and "F" in params and "S" in params:
+            params = dict(params)
+            params["F"] = float(params["F"]) * float(params["S"]) / 60.0
+            command = Path.Command(command.Name, params)
+        return super()._convert_drill_cycle(command)
 
     @property
     def tooltip(self):
