@@ -92,10 +92,6 @@ class CamoticsLibrarySerializer(AssetSerializer):
         if not isinstance(asset, Library):
             raise TypeError("Asset must be a Library instance")
 
-        decimals = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Units").GetInt(
-            "Decimals", 2
-        )
-
         toollist = {}
         skipped = []
         for tool_no, tool in asset._bit_nos.items():
@@ -111,11 +107,11 @@ class CamoticsLibrarySerializer(AssetSerializer):
 
             toolitem["units"], unit = _camotics_units(diameter_value)
 
-            toolitem["diameter"] = round(diameter_value.getValueAs(unit).Value, decimals)
+            toolitem["diameter"] = diameter_value.getValueAs(unit).Value
 
             toolitem["description"] = tool.label
 
-            toolitem["length"] = round(tool.get_length().getValueAs(unit).Value, decimals)
+            toolitem["length"] = tool.get_length().getValueAs(unit).Value
 
             toolitem["shape"] = SHAPEMAP.get(tool._tool_bit_shape.name.lower(), "Cylindrical")
             toollist[str(tool_no)] = toolitem
