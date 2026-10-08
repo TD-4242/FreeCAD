@@ -149,11 +149,6 @@ class TestCamoticsLibrarySerializer(TestPathToolLibrarySerializerBase):
         understands mm and inch, so the value has to be written in one of those.
         """
         serializer = CamoticsLibrarySerializer
-        # serialize() rounds to the user's Decimals preference, so round the
-        # expected value the same way rather than assuming a fixed precision.
-        decimals = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Units").GetInt(
-            "Decimals", 2
-        )
         schemas = FreeCAD.Units.listSchemas()
         original = FreeCAD.Units.getSchema()
         try:
@@ -176,7 +171,7 @@ class TestCamoticsLibrarySerializer(TestPathToolLibrarySerializerBase):
                         expected /= 25.4
                     self.assertAlmostEqual(
                         item["diameter"],
-                        round(expected, decimals),
+                        expected,
                         places=6,
                         msg=f"schema {schemas[schema]} tool {tool_no}: "
                         f'{item["diameter"]} does not match label {item["units"]}',
