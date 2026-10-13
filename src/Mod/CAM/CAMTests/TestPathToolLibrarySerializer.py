@@ -5,8 +5,8 @@ import json
 import FreeCAD
 from CAMTests.PathTestUtils import PathTestWithAssets
 from Path.Tool.library import Library
-from Path.Tool.toolbit import ToolBitEndmill
-from Path.Tool.shape import ToolBitShapeEndmill, ToolBitShapeBallend
+from Path.Tool.toolbit import ToolBitEndmill, ToolBitProbe
+from Path.Tool.shape import ToolBitShapeEndmill, ToolBitShapeBallend, ToolBitShapeProbe
 from Path.Tool.library.serializers import CamoticsLibrarySerializer, LinuxCNCSerializer
 
 
@@ -176,8 +176,43 @@ class TestCamoticsLibrarySerializer(TestPathToolLibrarySerializerBase):
                         msg=f"schema {schemas[schema]} tool {tool_no}: "
                         f'{item["diameter"]} does not match label {item["units"]}',
                     )
+                    expected_length = 20.0 if tool_no == "1" else (15.0 if tool_no == "2" else 18.0)
+                    if expected_units == "imperial":
+                        expected_length /= 25.4
+                    self.assertAlmostEqual(
+                        item["length"],
+                        expected_length,
+                        places=6,
+                        msg=f"schema {schemas[schema]} tool {tool_no}: "
+                        f'{item["length"]} does not match label {item["units"]}',
+                    )
         finally:
             FreeCAD.Units.setSchema(original)
+
+    def test_camotics_mixed_library_skips_probe_and_keeps_endmill(self):
+        """A non-rotary tool must not prevent later rotary tools exporting."""
+        library = Library("Mixed tools", id="mixed")
+        probe = ToolBitProbe(ToolBitShapeProbe("probe"), id="probe")
+        library.add_bit(probe, 1)
+        library.add_bit(self.test_library._bit_nos[1], 2)
+        original = FreeCAD.Units.getSchema()
+        try:
+            FreeCAD.Units.setSchema(0)
+            data = json.loads(CamoticsLibrarySerializer.serialize(library).decode("utf-8"))
+        finally:
+            FreeCAD.Units.setSchema(original)
+        self.assertEqual(
+            data,
+            {
+                "2": {
+                    "description": "Endmill 6mm",
+                    "diameter": 6.0,
+                    "length": 20.0,
+                    "shape": "Cylindrical",
+                    "units": "metric",
+                }
+            },
+        )
 
     def test_camotics_deserialize_honours_units(self):
         """An imperial library must not be read as millimetres."""
