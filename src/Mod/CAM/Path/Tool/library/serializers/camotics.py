@@ -24,6 +24,7 @@ import uuid
 import json
 from typing import Mapping, List, Optional, Type
 import FreeCAD
+import Path
 from ...assets import Asset, AssetUri, AssetSerializer
 from ...toolbit import ToolBit
 from ...toolbit.mixins import RotaryToolBitMixin
@@ -91,27 +92,32 @@ class CamoticsLibrarySerializer(AssetSerializer):
         if not isinstance(asset, Library):
             raise TypeError("Asset must be a Library instance")
 
-        decimals = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Units").GetInt(
-            "Decimals", 2
-        )
-
         toollist = {}
+        skipped = []
         for tool_no, tool in asset._bit_nos.items():
-            assert isinstance(tool, RotaryToolBitMixin)
+            # Camotics models rotary cutters only.  Probes and other non-rotary
+            # bits have no representation in its library format, so they are
+            # left out rather than aborting the export of the whole library.
+            if not isinstance(tool, RotaryToolBitMixin):
+                skipped.append(f"#{tool_no} {tool.label}")
+                continue
             toolitem = tooltemplate.copy()
 
             diameter_value = tool.get_diameter()
 
             toolitem["units"], unit = _camotics_units(diameter_value)
 
-            toolitem["diameter"] = round(diameter_value.getValueAs(unit).Value, decimals)
+            toolitem["diameter"] = diameter_value.getValueAs(unit).Value
 
             toolitem["description"] = tool.label
 
-            toolitem["length"] = round(tool.get_length().getValueAs(unit).Value, decimals)
+            toolitem["length"] = tool.get_length().getValueAs(unit).Value
 
             toolitem["shape"] = SHAPEMAP.get(tool._tool_bit_shape.name.lower(), "Cylindrical")
             toollist[str(tool_no)] = toolitem
+
+        if skipped:
+            Path.Log.warning("Camotics export: skipped non-rotary tool(s): " + ", ".join(skipped))
 
         return json.dumps(toollist, indent=2).encode("utf-8")
 
@@ -163,8 +169,8 @@ class CamoticsLibrarySerializer(AssetSerializer):
             shape_id = shape_name_str.lower()
             tool_bit_shape = shape_class(shape_id, **params)
 
-            # Create the toolbit
-            tool = ToolBit(tool_bit_shape, id=f"camotics_tool_{tool_no_str}")
+            # from_shape picks the shape's rotary subclass, which serialize() requires.
+            tool = ToolBit.from_shape(tool_bit_shape, {}, id=f"camotics_tool_{tool_no_str}")
             tool.label = toolitem.get("description", "")
 
             library.add_bit(tool, tool_no)

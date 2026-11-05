@@ -5,8 +5,8 @@ import json
 import FreeCAD
 from CAMTests.PathTestUtils import PathTestWithAssets
 from Path.Tool.library import Library
-from Path.Tool.toolbit import ToolBitEndmill
-from Path.Tool.shape import ToolBitShapeEndmill, ToolBitShapeBallend
+from Path.Tool.toolbit import ToolBitEndmill, ToolBitProbe
+from Path.Tool.shape import ToolBitShapeEndmill, ToolBitShapeBallend, ToolBitShapeProbe
 from Path.Tool.library.serializers import CamoticsLibrarySerializer, LinuxCNCSerializer
 
 
@@ -149,11 +149,6 @@ class TestCamoticsLibrarySerializer(TestPathToolLibrarySerializerBase):
         understands mm and inch, so the value has to be written in one of those.
         """
         serializer = CamoticsLibrarySerializer
-        # serialize() rounds to the user's Decimals preference, so round the
-        # expected value the same way rather than assuming a fixed precision.
-        decimals = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Units").GetInt(
-            "Decimals", 2
-        )
         schemas = FreeCAD.Units.listSchemas()
         original = FreeCAD.Units.getSchema()
         try:
@@ -176,13 +171,48 @@ class TestCamoticsLibrarySerializer(TestPathToolLibrarySerializerBase):
                         expected /= 25.4
                     self.assertAlmostEqual(
                         item["diameter"],
-                        round(expected, decimals),
+                        expected,
                         places=6,
                         msg=f"schema {schemas[schema]} tool {tool_no}: "
                         f'{item["diameter"]} does not match label {item["units"]}',
                     )
+                    expected_length = 20.0 if tool_no == "1" else (15.0 if tool_no == "2" else 18.0)
+                    if expected_units == "imperial":
+                        expected_length /= 25.4
+                    self.assertAlmostEqual(
+                        item["length"],
+                        expected_length,
+                        places=6,
+                        msg=f"schema {schemas[schema]} tool {tool_no}: "
+                        f'{item["length"]} does not match label {item["units"]}',
+                    )
         finally:
             FreeCAD.Units.setSchema(original)
+
+    def test_camotics_mixed_library_skips_probe_and_keeps_endmill(self):
+        """A non-rotary tool must not prevent later rotary tools exporting."""
+        library = Library("Mixed tools", id="mixed")
+        probe = ToolBitProbe(ToolBitShapeProbe("probe"), id="probe")
+        library.add_bit(probe, 1)
+        library.add_bit(self.test_library._bit_nos[1], 2)
+        original = FreeCAD.Units.getSchema()
+        try:
+            FreeCAD.Units.setSchema(0)
+            data = json.loads(CamoticsLibrarySerializer.serialize(library).decode("utf-8"))
+        finally:
+            FreeCAD.Units.setSchema(original)
+        self.assertEqual(
+            data,
+            {
+                "2": {
+                    "description": "Endmill 6mm",
+                    "diameter": 6.0,
+                    "length": 20.0,
+                    "shape": "Cylindrical",
+                    "units": "metric",
+                }
+            },
+        )
 
     def test_camotics_deserialize_honours_units(self):
         """An imperial library must not be read as millimetres."""
@@ -201,6 +231,24 @@ class TestCamoticsLibrarySerializer(TestPathToolLibrarySerializerBase):
         self.assertAlmostEqual(
             bit._tool_bit_shape.get_parameter("Diameter").getValueAs("mm").Value, 6.35, places=3
         )
+
+    def test_camotics_round_trip_keeps_tools(self):
+        """A library read by this serializer must export its tools again."""
+        serializer = CamoticsLibrarySerializer
+        data = {
+            "1": {"units": "metric", "shape": "Cylindrical", "length": 20, "diameter": 6},
+            "2": {"units": "metric", "shape": "Ballnose", "length": 18, "diameter": 5},
+        }
+        library = serializer.deserialize(json.dumps(data).encode("utf-8"), "rt", {})
+        original = FreeCAD.Units.getSchema()
+        try:
+            FreeCAD.Units.setSchema(0)
+            out = json.loads(serializer.serialize(library).decode("utf-8"))
+        finally:
+            FreeCAD.Units.setSchema(original)
+        self.assertEqual(sorted(out), ["1", "2"])
+        self.assertEqual(out["2"]["shape"], "Ballnose")
+        self.assertAlmostEqual(out["1"]["diameter"], 6.0, places=6)
 
 
 class TestLinuxCNCLibrarySerializer(TestPathToolLibrarySerializerBase):
